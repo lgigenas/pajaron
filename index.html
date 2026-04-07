@@ -1,0 +1,756 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pájaro Glotón - Prototipo Funcional</title>
+    <style>
+        body { 
+            margin: 0; 
+            background: #2c3e50; 
+            display: flex; 
+            flex-direction: column; 
+            align-items: center; 
+            justify-content: center; 
+            height: 100vh; 
+            color: white; 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+        }
+        canvas { 
+            background: #87CEEB; 
+            border: 5px solid #34495e; 
+            border-radius: 8px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5); 
+            cursor: pointer;
+            max-width: 100%;
+            height: auto;
+            display: block;
+        }
+        .ui-panel { margin-bottom: 15px; text-align: center; }
+        .stats-row { 
+            margin: 8px 0; 
+            font-size: 14px;
+        }
+        .stat { font-weight: bold; color: #f1c40f; margin: 0 10px; }
+    </style>
+</head>
+<body>
+
+    <div class="ui-panel">
+        <h2>🐦 Pájaro Glotón</h2>
+        <div class="stats-row">
+            <div>Nivel: <span id="nivel" class="stat">1</span></div>
+            <div>Score: <span id="score" class="stat">0</span> / <span id="objetivo" class="stat">10</span></div>
+        </div>
+        <div class="stats-row">
+            <div>Peso: <span id="peso" class="stat">0</span></div>
+            <div>Agilidad: <span id="agilidad" class="stat">100%</span></div>
+            <div>High Score: <span id="highScore" class="stat">0</span></div>
+        </div>
+    </div>
+
+    <canvas id="gameCanvas"></canvas>
+
+    <p>Clic para saltar | Come cerezas (1 punto) | Come plumas para reducir peso | Presiona P para pausar</p>
+
+<script>
+/**
+ * =====================================
+ * CONFIGURACIÓN CENTRALIZADA DEL JUEGO
+ * =====================================
+ */
+const CONFIG = {
+  // Canvas
+  baseWidth: 400,
+  baseHeight: 550,
+  
+  // Bird
+  bird: {
+    startX: 60,
+    startY: 200,
+    startW: 35,
+    startH: 35,
+    gravity: 0.4,
+    lift: -7.5,
+    gravityPerWeight: 0.025,
+    liftPenalty: 0.03,
+    maxSize: 90,
+    minSize: 35
+  },
+  
+  // Obstacles
+  obstacles: {
+    spawnRateBase: 85,
+    cerezaChance: 0.5, // 50%
+    speedMin: 3,
+    speedMax: 5,
+    speedIncreasePerLevel: 0.5,
+    size: 28
+  },
+  
+  // Leveling
+  levels: {
+    basePoints: 10,
+    pointsPerCereza: 1
+  },
+  
+  // Audio
+  audio: {
+    enabled: true
+  },
+
+  // Parallax & Environment
+  parallax: {
+    cloudSpeed: 0.3,
+    cloudDensity: 0.3
+  }
+};
+
+/**
+ * =====================================
+ * ESTADO GLOBAL DEL JUEGO
+ * =====================================
+ */
+const STATE = {
+  bird: null,
+  obstacles: [],
+  particles: [],
+  clouds: [],
+  frame: 0,
+  gameStarted: false,
+  gameOver: false,
+  paused: false,
+  currentLevel: 1,
+  score: 0,
+  highScore: parseInt(localStorage.getItem('highScore')) || 0,
+  levelUp: false,
+  levelUpTimer: 0,
+  mousePressed: false,
+  birdAnimationFrame: 0,
+  scrollOffset: 0
+};
+
+/**
+ * =====================================
+ * CANVAS Y CONTEXTO
+ * =====================================
+ */
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+canvas.width = CONFIG.baseWidth;
+canvas.height = CONFIG.baseHeight;
+
+// Carga de Assets (Imágenes)
+const imgPajaro = new Image(); imgPajaro.src = 'pajaro.png';
+const imgPajaro2 = new Image(); imgPajaro2.src = 'pajaro2.png';
+const imgCereza = new Image(); imgCereza.src = 'cereza.png';
+const imgPluma = new Image(); imgPluma.src = 'pluma.png';
+
+/**
+ * =====================================
+ * GENERADOR DE PARTÍCULAS
+ * =====================================
+ */
+function createParticles(x, y, type) {
+  let count = 8;
+  let color = type === 'cereza' ? '#e74c3c' : '#ecf0f1';
+  
+  for (let i = 0; i < count; i++) {
+    let angle = (Math.PI * 2 / count) * i;
+    let speed = 2 + Math.random() * 3;
+    
+    STATE.particles.push({
+      x: x,
+      y: y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      life: 30,
+      maxLife: 30,
+      color: color,
+      size: 4 + Math.random() * 3
+    });
+  }
+}
+
+function updateParticles() {
+  for (let i = STATE.particles.length - 1; i >= 0; i--) {
+    let p = STATE.particles[i];
+    p.x += p.vx;
+    p.y += p.vy;
+    p.vy += 0.1; // Gravedad
+    p.life--;
+    
+    if (p.life <= 0) {
+      STATE.particles.splice(i, 1);
+    }
+  }
+}
+
+function drawParticles() {
+  STATE.particles.forEach(p => {
+    let alpha = p.life / p.maxLife;
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = p.color;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  });
+}
+
+/**
+ * =====================================
+ * ANIMACIÓN DEL PÁJARO
+ * =====================================
+ */
+function getCurrentBirdImage() {
+  // Cambiar de imagen cada 6 frames para animación suave
+  // Cuando está volando (vel negativo o mousePressed)
+  if (STATE.mousePressed || STATE.bird.vel < 0) {
+    STATE.birdAnimationFrame = Math.floor(STATE.frame / 6) % 2;
+    return STATE.birdAnimationFrame === 0 ? imgPajaro : imgPajaro2;
+  } else {
+    // Cuando está cayendo, usa la primera imagen
+    STATE.birdAnimationFrame = 0;
+    return imgPajaro;
+  }
+}
+
+/**
+ * =====================================
+ * SISTEMA DE NUBES (PARALAJE)
+ * =====================================
+ */
+function initializeClouds() {
+  STATE.clouds = [];
+  // Generar nubes iniciales
+  for (let i = 0; i < 5; i++) {
+    STATE.clouds.push({
+      x: Math.random() * canvas.width,
+      y: Math.random() * (canvas.height * 0.6),
+      w: 60 + Math.random() * 40,
+      h: 30 + Math.random() * 20,
+      speed: 0.2 + Math.random() * 0.3
+    });
+  }
+}
+
+function updateClouds() {
+  // Mover nubes hacia la izquierda
+  STATE.clouds.forEach(cloud => {
+    cloud.x -= cloud.speed;
+    
+    // Reciclar nubes que salieron de pantalla
+    if (cloud.x + cloud.w < 0) {
+      cloud.x = canvas.width;
+      cloud.y = Math.random() * (canvas.height * 0.6);
+    }
+  });
+}
+
+function drawClouds() {
+  // Dibujar nubes
+  STATE.clouds.forEach(cloud => {
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+    
+    // Forma de nube (tres círculos)
+    ctx.beginPath();
+    ctx.arc(cloud.x, cloud.y, cloud.h * 0.8, 0, Math.PI * 2);
+    ctx.fill();
+    
+    ctx.beginPath();
+    ctx.arc(cloud.x + cloud.w * 0.35, cloud.y - cloud.h * 0.3, cloud.h * 0.9, 0, Math.PI * 2);
+    ctx.fill();
+    
+    ctx.beginPath();
+    ctx.arc(cloud.x + cloud.w * 0.7, cloud.y, cloud.h * 0.8, 0, Math.PI * 2);
+    ctx.fill();
+  });
+}
+
+/**
+ * =====================================
+ * DIBUJO DEL PISO
+ * =====================================
+ */
+function drawGround() {
+  let groundY = canvas.height - 30;
+  let tileWidth = 50;
+  
+  // Color del piso
+  ctx.fillStyle = '#8B7355';
+  ctx.fillRect(0, groundY, canvas.width, 30);
+  
+  // Patrón de cesped en la parte superior del piso
+  ctx.fillStyle = '#27AE60';
+  ctx.fillRect(0, groundY, canvas.width, 8);
+  
+  // Efecto de desplazamiento con líneas
+  ctx.strokeStyle = 'rgba(0, 0, 0, 0.2)';
+  ctx.lineWidth = 1;
+  for (let i = 0; i < canvas.width / tileWidth + 2; i++) {
+    let xPos = (i * tileWidth - (STATE.scrollOffset % tileWidth));
+    ctx.beginPath();
+    ctx.moveTo(xPos, groundY);
+    ctx.lineTo(xPos, groundY + 30);
+    ctx.stroke();
+  }
+}
+
+/**
+ * =====================================
+ * ACTUALIZAR DESPLAZAMIENTO
+ * =====================================
+ */
+function updateScroll() {
+  // El scroll se actualiza lentamente para dar sensación de movimiento
+  STATE.scrollOffset += CONFIG.parallax.cloudSpeed * 1.5;
+}
+
+/**
+ * =====================================
+ * AUDIO ENGINE (Web Audio API)
+ * =====================================
+ */
+let audioContext = null;
+
+function initAudio() {
+  if (audioContext) return;
+  audioContext = new (window.AudioContext || window.webkitAudioContext)();
+}
+
+function playSound(type) {
+  if (!CONFIG.audio.enabled || !audioContext) return;
+  
+  const now = audioContext.currentTime;
+  
+  switch(type) {
+    case 'eatCherry':
+      playTone(600, 0.1, 0.3, now);
+      playTone(800, 0.05, 0.15, now + 0.05);
+      break;
+      
+    case 'eatFeather':
+      playTone(300, 0.15, 0.2, now);
+      playTone(200, 0.1, 0.15, now + 0.1);
+      break;
+      
+    case 'levelUp':
+      playTone(500, 0.1, 0.3, now);
+      playTone(700, 0.1, 0.3, now + 0.15);
+      break;
+      
+    case 'gameOver':
+      playTone(400, 0.2, 0.3, now);
+      playTone(300, 0.2, 0.3, now + 0.1);
+      playTone(200, 0.2, 0.2, now + 0.2);
+      break;
+  }
+}
+
+function playTone(freq, duration, gain, startTime) {
+  let osc = audioContext.createOscillator();
+  let gainNode = audioContext.createGain();
+  osc.connect(gainNode);
+  gainNode.connect(audioContext.destination);
+  osc.frequency.setValueAtTime(freq, startTime);
+  gainNode.gain.setValueAtTime(gain, startTime);
+  gainNode.gain.exponentialRampToValueAtTime(0.01, startTime + duration);
+  osc.start(startTime);
+  osc.stop(startTime + duration);
+}
+
+/**
+ * =====================================
+ * INICIALIZACIÓN
+ * =====================================
+ */
+function init() {
+  STATE.bird = {
+    x: CONFIG.bird.startX,
+    y: CONFIG.bird.startY,
+    w: CONFIG.bird.startW,
+    h: CONFIG.bird.startH,
+    vel: 0,
+    weight: 0
+  };
+  STATE.obstacles = [];
+  STATE.frame = 0;
+  STATE.gameStarted = false;
+  STATE.gameOver = false;
+  STATE.paused = false;
+  STATE.levelUp = false;
+  STATE.scrollOffset = 0;
+  initializeClouds();
+  updateUI();
+}
+
+/**
+ * =====================================
+ * GENERADOR DE OBSTÁCULOS
+ * =====================================
+ */
+function spawn() {
+  let spawnRate = CONFIG.obstacles.spawnRateBase - (STATE.currentLevel * 5);
+  spawnRate = Math.max(40, spawnRate); // Mínimo 40 frames
+  
+  if (STATE.frame % spawnRate === 0) {
+    let esCereza = Math.random() < CONFIG.obstacles.cerezaChance;
+    let baseSpeed = CONFIG.obstacles.speedMin + 
+                    (Math.random() * (CONFIG.obstacles.speedMax - CONFIG.obstacles.speedMin));
+    let speed = baseSpeed + (STATE.currentLevel * CONFIG.obstacles.speedIncreasePerLevel * 0.1);
+    
+    STATE.obstacles.push({
+      x: canvas.width + 50,
+      y: Math.random() * (canvas.height - 120) + 60,
+      type: esCereza ? 'cereza' : 'pluma',
+      size: CONFIG.obstacles.size,
+      speed: speed
+    });
+  }
+}
+
+/**
+ * =====================================
+ * LÓGICA DE FÍSICA Y COLISIONES
+ * =====================================
+ */
+function update() {
+  if (!STATE.gameStarted || STATE.gameOver || STATE.paused) return;
+
+  // Aplicar entrada de vuelo (clic mantenido)
+  handleFlightInput();
+
+  // Actualizar partículas
+  updateParticles();
+
+  // Actualizar nubes y scroll
+  updateClouds();
+  updateScroll();
+
+  // Física afectada por el peso
+  let gravedadActual = CONFIG.bird.gravity + (STATE.bird.weight * CONFIG.bird.gravityPerWeight);
+  STATE.bird.vel += gravedadActual;
+  STATE.bird.y += STATE.bird.vel;
+
+   // LÍMITES FÍSICOS
+  let groundY = canvas.height - 30;
+  if (STATE.bird.y + STATE.bird.h > groundY) {
+    STATE.gameOver = true;
+    playSound('gameOver');
+    return;
+  }
+  if (STATE.bird.y < 0) {
+    STATE.bird.y = 0;
+    STATE.bird.vel = 0;
+  }
+
+  // PROCESAMIENTO DE OBSTÁCULOS
+  spawn();
+  for (let i = STATE.obstacles.length - 1; i >= 0; i--) {
+    let o = STATE.obstacles[i];
+    o.x -= o.speed;
+
+    // Detección de Colisión (Hitbox circular)
+    let dx = (STATE.bird.x + STATE.bird.w/2) - o.x;
+    let dy = (STATE.bird.y + STATE.bird.h/2) - o.y;
+    let dist = Math.sqrt(dx * dx + dy * dy);
+
+    if (dist < (STATE.bird.w/2 + o.size/2)) {
+      aplicarEfecto(o.type);
+      STATE.obstacles.splice(i, 1);
+      updateUI();
+      continue;
+    }
+
+    // FIX CRÍTICO: Cambiar de splice(i, i) a splice(i, 1)
+    if (o.x < -50) STATE.obstacles.splice(i, 1);
+  }
+  STATE.frame++;
+}
+
+/**
+ * =====================================
+ * APLICAR EFECTOS DE ITEMS
+ * =====================================
+ */
+function aplicarEfecto(tipo) {
+  if (tipo === 'cereza') {
+    STATE.bird.weight += 1;
+    STATE.bird.w = Math.min(STATE.bird.w + 3, CONFIG.bird.maxSize);
+    STATE.bird.h = Math.min(STATE.bird.h + 3, CONFIG.bird.maxSize);
+    STATE.score += CONFIG.levels.pointsPerCereza;
+    
+    // Crear partículas
+    createParticles(STATE.bird.x + STATE.bird.w/2, STATE.bird.y + STATE.bird.h/2, 'cereza');
+    
+    playSound('eatCherry');
+    
+    // Verificar si completa nivel
+    let pointsNeeded = CONFIG.levels.basePoints * STATE.currentLevel;
+    if (STATE.score >= pointsNeeded) {
+      levelUpHandler();
+    }
+  } else {
+    STATE.bird.weight = Math.max(0, STATE.bird.weight - 2);
+    STATE.bird.w = Math.max(CONFIG.bird.minSize, STATE.bird.w - 6);
+    STATE.bird.h = Math.max(CONFIG.bird.minSize, STATE.bird.h - 6);
+    
+    // Crear partículas
+    createParticles(STATE.bird.x + STATE.bird.w/2, STATE.bird.y + STATE.bird.h/2, 'pluma');
+    
+    playSound('eatFeather');
+  }
+}
+
+/**
+ * =====================================
+ * MANEJO DE CAMBIO DE NIVEL
+ * =====================================
+ */
+function levelUpHandler() {
+  STATE.levelUp = true;
+  STATE.levelUpTimer = 180; // 3 segundos a 60 FPS
+  STATE.currentLevel++;
+  playSound('levelUp');
+  
+  // Reset parcial
+  STATE.bird.weight = 0;
+  STATE.bird.w = CONFIG.bird.startW;
+  STATE.bird.h = CONFIG.bird.startH;
+  STATE.bird.y = CONFIG.bird.startY;
+  STATE.bird.vel = 0;
+  STATE.obstacles = [];
+  STATE.gameStarted = false;
+  
+  // Reset score para próximo nivel
+  STATE.score = 0;
+}
+
+/**
+ * =====================================
+ * ACTUALIZACIÓN DE UI
+ * =====================================
+ */
+function updateUI() {
+  document.getElementById('nivel').innerText = STATE.currentLevel;
+  document.getElementById('score').innerText = STATE.score;
+  document.getElementById('peso').innerText = STATE.bird.weight.toFixed(1);
+  
+  let pointsNeeded = CONFIG.levels.basePoints * STATE.currentLevel;
+  document.getElementById('objetivo').innerText = pointsNeeded;
+  
+  let agilidad = Math.max(0, 100 - STATE.bird.weight * 6);
+  document.getElementById('agilidad').innerText = agilidad.toFixed(0) + "%";
+  
+  if (STATE.highScore < STATE.score) {
+    STATE.highScore = STATE.score;
+    localStorage.setItem('highScore', STATE.highScore);
+  }
+  document.getElementById('highScore').innerText = STATE.highScore;
+}
+
+/**
+ * =====================================
+ * RENDERIZADO
+ * =====================================
+ */
+function draw() {
+  // Limpiar Canvas
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  // Dibujar Nubes de fondo
+  drawClouds();
+
+  // Dibujar Pájaro con animación
+  let currentBirdImage = getCurrentBirdImage();
+  if (currentBirdImage.complete && currentBirdImage.naturalWidth !== 0) {
+    ctx.drawImage(currentBirdImage, STATE.bird.x, STATE.bird.y, STATE.bird.w, STATE.bird.h);
+  } else {
+    ctx.fillStyle = "#f1c40f";
+    ctx.beginPath();
+    ctx.arc(STATE.bird.x + STATE.bird.w/2, STATE.bird.y + STATE.bird.h/2, STATE.bird.w/2, 0, Math.PI*2);
+    ctx.fill();
+    ctx.strokeStyle = "#333";
+    ctx.lineWidth = 2;
+    ctx.stroke();
+  }
+
+  // Dibujar Obstáculos
+  STATE.obstacles.forEach(o => {
+    let img = o.type === 'cereza' ? imgCereza : imgPluma;
+    if (img.complete && img.naturalWidth !== 0) {
+      ctx.drawImage(img, o.x - o.size/2, o.y - o.size/2, o.size, o.size);
+    } else {
+      ctx.fillStyle = o.type === 'cereza' ? '#e74c3c' : '#ecf0f1';
+      ctx.beginPath();
+      ctx.arc(o.x, o.y, o.size/2, 0, Math.PI*2);
+       ctx.fill();
+     }
+   });
+
+  // Dibujar Partículas
+  drawParticles();
+
+  // Dibujar Piso
+  drawGround();
+
+  // PANTALLA DE CAMBIO DE NIVEL
+  if (STATE.levelUp) {
+    STATE.levelUpTimer--;
+    
+    ctx.fillStyle = 'rgba(0,0,0,0.7)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    
+    ctx.fillStyle = '#2ecc71';
+    ctx.font = 'bold 40px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText('¡NIVEL COMPLETADO!', canvas.width/2, canvas.height/2 - 60);
+    
+    ctx.font = '28px Arial';
+    ctx.fillText('Nivel ' + STATE.currentLevel, canvas.width/2, canvas.height/2 + 20);
+    
+    let pointsNeeded = CONFIG.levels.basePoints * STATE.currentLevel;
+    ctx.font = '18px Arial';
+    ctx.fillStyle = 'white';
+    ctx.fillText('Próximo objetivo: ' + pointsNeeded + ' puntos', canvas.width/2, canvas.height/2 + 70);
+    
+    if (STATE.levelUpTimer <= 0) {
+      STATE.levelUp = false;
+    }
+    update();
+    requestAnimationFrame(draw);
+    return;
+  }
+
+  // PANTALLA DE GAME OVER
+  if (STATE.gameOver) {
+    ctx.fillStyle = 'rgba(0,0,0,0.7)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    
+    ctx.fillStyle = '#e74c3c';
+    ctx.font = 'bold 40px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText('GAME OVER', canvas.width/2, canvas.height/2 - 80);
+    
+    ctx.fillStyle = 'white';
+    ctx.font = 'bold 24px Arial';
+    ctx.fillText('Nivel alcanzado: ' + STATE.currentLevel, canvas.width/2, canvas.height/2 - 20);
+    ctx.fillText('Score: ' + STATE.score, canvas.width/2, canvas.height/2 + 30);
+    
+    ctx.font = '18px Arial';
+    ctx.fillText('High Score: ' + STATE.highScore, canvas.width/2, canvas.height/2 + 80);
+    ctx.fillText('Clic para reintentar', canvas.width/2, canvas.height/2 + 130);
+    
+    update();
+    requestAnimationFrame(draw);
+    return;
+  }
+
+  // MENSAJES DE PANTALLA
+  ctx.fillStyle = "white";
+  ctx.textAlign = "center";
+  ctx.font = "bold 18px Arial";
+
+  if (!STATE.gameStarted) {
+    ctx.fillText("HAZ CLIC PARA DESPEGAR", canvas.width/2, canvas.height/2);
+  }
+
+  // INDICADOR DE PAUSA
+  if (STATE.paused) {
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#f1c40f';
+    ctx.font = 'bold 32px Arial';
+    ctx.fillText('PAUSA', canvas.width/2, canvas.height/2);
+    ctx.font = '16px Arial';
+    ctx.fillText('Presiona P para continuar', canvas.width/2, canvas.height/2 + 50);
+  }
+
+  update();
+  requestAnimationFrame(draw);
+}
+
+/**
+ * =====================================
+ * CONTROLES (Input)
+ * =====================================
+ */
+
+// Mantener registro de si el mouse está presionado
+window.addEventListener('mousedown', (e) => {
+  STATE.mousePressed = true;
+  
+  if (STATE.gameOver) {
+    STATE.currentLevel = 1;
+    STATE.score = 0;
+    init();
+    return;
+  }
+  if (!STATE.gameStarted && !STATE.levelUp) {
+    STATE.gameStarted = true;
+  }
+});
+
+window.addEventListener('mouseup', () => {
+  STATE.mousePressed = false;
+});
+
+window.addEventListener('mouseleave', () => {
+  STATE.mousePressed = false;
+});
+
+// Aplicar fuerza de salto mientras se mantiene el clic
+function handleFlightInput() {
+  if (STATE.mousePressed && STATE.gameStarted && !STATE.gameOver && !STATE.levelUp && !STATE.paused) {
+    // El peso reduce la efectividad del salto
+    let fuerzaSalto = CONFIG.bird.lift * (1 - (STATE.bird.weight * CONFIG.bird.liftPenalty));
+    STATE.bird.vel = fuerzaSalto;
+  }
+}
+
+// Tecla P para pausar
+window.addEventListener('keydown', (e) => {
+  if (e.key.toLowerCase() === 'p') {
+    if (STATE.gameStarted && !STATE.gameOver && !STATE.levelUp) {
+      STATE.paused = !STATE.paused;
+    }
+  }
+});
+
+/**
+ * =====================================
+ * RESPONSIVE DESIGN
+ * =====================================
+ */
+function handleResize() {
+  let maxWidth = window.innerWidth - 20;
+  let maxHeight = window.innerHeight - 200;
+  
+  let ratio = CONFIG.baseWidth / CONFIG.baseHeight;
+  let newWidth = Math.min(maxWidth, CONFIG.baseWidth);
+  let newHeight = newWidth / ratio;
+  
+  if (newHeight > maxHeight) {
+    newHeight = maxHeight;
+    newWidth = newHeight * ratio;
+  }
+  
+  canvas.style.width = newWidth + 'px';
+  canvas.style.height = newHeight + 'px';
+}
+
+window.addEventListener('resize', handleResize);
+
+/**
+ * =====================================
+ * EJECUCIÓN INICIAL
+ * =====================================
+ */
+init();
+handleResize();
+initAudio();
+draw();
+</script>
+</body>
+</html>
