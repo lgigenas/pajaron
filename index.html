@@ -138,6 +138,9 @@ const STATE = {
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 canvas.width = CONFIG.baseWidth;
+// Prevenir scroll y zoom en moviles mientras se juega
+canvas.addEventListener('touchmove', (e) => { e.preventDefault(); }, { passive: false });
+document.addEventListener('gesturestart', (e) => { e.preventDefault(); });
 canvas.height = CONFIG.baseHeight;
 
 // Carga de Assets (Imágenes)
@@ -677,8 +680,8 @@ function draw() {
  * =====================================
  */
 
-// Mantener registro de si el mouse está presionado
-window.addEventListener('mousedown', (e) => {
+// Mantener registro de si el mouse/táctil está presionado
+function handleInputDown() {
   STATE.mousePressed = true;
   
   if (STATE.gameOver) {
@@ -690,14 +693,39 @@ window.addEventListener('mousedown', (e) => {
   if (!STATE.gameStarted && !STATE.levelUp) {
     STATE.gameStarted = true;
   }
+}
+
+function handleInputUp() {
+  STATE.mousePressed = false;
+}
+
+// MOUSE EVENTS
+window.addEventListener('mousedown', () => {
+  handleInputDown();
 });
 
 window.addEventListener('mouseup', () => {
-  STATE.mousePressed = false;
+  handleInputUp();
 });
 
 window.addEventListener('mouseleave', () => {
-  STATE.mousePressed = false;
+  handleInputUp();
+});
+
+// TOUCH EVENTS (Móviles)
+window.addEventListener('touchstart', (e) => {
+  e.preventDefault();
+  handleInputDown();
+});
+
+window.addEventListener('touchend', (e) => {
+  e.preventDefault();
+  handleInputUp();
+});
+
+window.addEventListener('touchcancel', (e) => {
+  e.preventDefault();
+  handleInputUp();
 });
 
 // Aplicar fuerza de salto mientras se mantiene el clic

@@ -1,0 +1,47 @@
+// Mantener registro de si el mouse/táctil está presionado
+function handleInputDown() {
+  STATE.mousePressed = true;
+  
+  if (STATE.gameOver) {
+    STATE.currentLevel = 1;
+    STATE.score = 0;
+    init();
+    return;
+  }
+  if (!STATE.gameStarted && !STATE.levelUp) {
+    STATE.gameStarted = true;
+  }
+}
+
+function handleInputUp() {
+  STATE.mousePressed = false;
+}
+
+// MOUSE EVENTS
+window.addEventListener('mousedown', () => {
+  handleInputDown();
+});
+
+window.addEventListener('mouseup', () => {
+  handleInputUp();
+});
+
+window.addEventListener('mouseleave', () => {
+  handleInputUp();
+});
+
+// TOUCH EVENTS (Móviles)
+window.addEventListener('touchstart', (e) => {
+  e.preventDefault();
+  handleInputDown();
+});
+
+window.addEventListener('touchend', (e) => {
+  e.preventDefault();
+  handleInputUp();
+});
+
+window.addEventListener('touchcancel', (e) => {
+  e.preventDefault();
+  handleInputUp();
+});
