@@ -26,32 +26,19 @@
             height: auto;
             display: block;
         }
-        .ui-panel { margin-bottom: 15px; text-align: center; }
-        .stats-row { 
-            margin: 8px 0; 
-            font-size: 14px;
-        }
-        .stat { font-weight: bold; color: #f1c40f; margin: 0 10px; }
+        .ui-panel { margin-bottom: 10px; text-align: center; }
+        .ui-panel h2 { margin: 10px 0; font-size: 24px; }
     </style>
 </head>
 <body>
 
     <div class="ui-panel">
         <h2>🐦 Pájaro Glotón</h2>
-        <div class="stats-row">
-            <div>Nivel: <span id="nivel" class="stat">1</span></div>
-            <div>Score: <span id="score" class="stat">0</span> / <span id="objetivo" class="stat">10</span></div>
-        </div>
-        <div class="stats-row">
-            <div>Peso: <span id="peso" class="stat">0</span></div>
-            <div>Agilidad: <span id="agilidad" class="stat">100%</span></div>
-            <div>High Score: <span id="highScore" class="stat">0</span></div>
-        </div>
     </div>
 
     <canvas id="gameCanvas"></canvas>
 
-    <p>Clic para saltar | Come cerezas (1 punto) | Come plumas para reducir peso | Presiona P para pausar</p>
+    <p style="font-size: 12px; margin-top: 10px;">Tap/Clic para saltar | Come cerezas (1 punto) | Come plumas para reducir peso | P para pausar</p>
 
 <script>
 /**
@@ -67,11 +54,11 @@ const CONFIG = {
   // Bird
   bird: {
     startX: 60,
-    startY: 200,
+    startY: 250,
     startW: 35,
     startH: 35,
     gravity: 0.4,
-    lift: -7.5,
+    lift: -3.5,
     gravityPerWeight: 0.025,
     liftPenalty: 0.03,
     maxSize: 90,
@@ -81,7 +68,7 @@ const CONFIG = {
   // Obstacles
   obstacles: {
     spawnRateBase: 85,
-    cerezaChance: 0.5, // 50%
+    cerezaChance: 0.65, // 65% cerezas
     speedMin: 3,
     speedMax: 5,
     speedIncreasePerLevel: 0.5,
@@ -126,8 +113,10 @@ const STATE = {
   levelUp: false,
   levelUpTimer: 0,
   mousePressed: false,
+  mousePressedLastFrame: false,
   birdAnimationFrame: 0,
-  scrollOffset: 0
+  scrollOffset: 0,
+  falcon: null
 };
 
 /**
@@ -148,6 +137,7 @@ const imgPajaro = new Image(); imgPajaro.src = 'pajaro.png';
 const imgPajaro2 = new Image(); imgPajaro2.src = 'pajaro2.png';
 const imgCereza = new Image(); imgCereza.src = 'cereza.png';
 const imgPluma = new Image(); imgPluma.src = 'pluma.png';
+const imgHalcon = new Image(); imgHalcon.src = 'halcon.png';
 
 /**
  * =====================================
@@ -312,6 +302,114 @@ function updateScroll() {
 
 /**
  * =====================================
+ * DIBUJO DE BARRAS DE UI
+ * =====================================
+ */
+function drawUIBars() {
+  const barHeight = 18;
+  const padding = 6;
+  const barWidth = canvas.width - (padding * 2);
+  const barRadius = 6;
+  
+  // Posiciones (ocupan solo 1/3 superior)
+  const y1 = padding;
+  const y2 = y1 + barHeight + padding;
+  
+  // Función para dibujar rectangulos redondeados
+  function roundRect(x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.lineTo(x + w - r, y);
+    ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+    ctx.lineTo(x + w, y + h - r);
+    ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+    ctx.lineTo(x + r, y + h);
+    ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+    ctx.lineTo(x, y + r);
+    ctx.quadraticCurveTo(x, y, x + r, y);
+    ctx.closePath();
+  }
+  
+  // BARRA 1: PROGRESO DE NIVEL (arriba)
+  let pointsNeeded = CONFIG.levels.basePoints * STATE.currentLevel;
+  let progressPercent = Math.min(100, (STATE.score / pointsNeeded) * 100);
+  
+  // Fondo de la barra redondeada
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.2)';
+  roundRect(padding, y1, barWidth, barHeight, barRadius);
+  ctx.fill();
+  
+  // Barra de progreso redondeada
+  ctx.fillStyle = 'rgba(46, 204, 113, 0.8)';
+  roundRect(padding, y1, (barWidth * progressPercent) / 100, barHeight, barRadius);
+  ctx.fill();
+  
+  // Borde redondeado
+  ctx.strokeStyle = 'rgba(39, 174, 96, 0.6)';
+  ctx.lineWidth = 1.5;
+  roundRect(padding, y1, barWidth, barHeight, barRadius);
+  ctx.stroke();
+  
+  // BARRA 2: PESO (en el medio)
+  let maxWeight = 20;
+  let weightPercent = Math.min(100, (STATE.bird.weight / maxWeight) * 100);
+  
+  // Fondo de la barra redondeada
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.2)';
+  roundRect(padding, y2, barWidth, barHeight, barRadius);
+  ctx.fill();
+  
+  // Barra de peso (roja si está casi llena)
+  if (weightPercent > 75) {
+    ctx.fillStyle = 'rgba(231, 76, 60, 0.8)';
+  } else if (weightPercent > 50) {
+    ctx.fillStyle = 'rgba(243, 156, 18, 0.8)';
+  } else {
+    ctx.fillStyle = 'rgba(230, 126, 34, 0.8)';
+  }
+  roundRect(padding, y2, (barWidth * weightPercent) / 100, barHeight, barRadius);
+  ctx.fill();
+  
+  // Borde redondeado
+  if (weightPercent > 75) {
+    ctx.strokeStyle = 'rgba(192, 57, 43, 0.6)';
+  } else if (weightPercent > 50) {
+    ctx.strokeStyle = 'rgba(230, 126, 34, 0.6)';
+  } else {
+    ctx.strokeStyle = 'rgba(189, 95, 16, 0.6)';
+  }
+  ctx.lineWidth = 1.5;
+  roundRect(padding, y2, barWidth, barHeight, barRadius);
+  ctx.stroke();
+  
+  // INDICADOR 3: NIVEL (arriba a la derecha)
+  let levelBoxX = canvas.width - padding - 50;
+  let levelBoxY = padding;
+  let levelBoxW = 50;
+  let levelBoxH = barHeight;
+  
+  // Fondo redondeado
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.2)';
+  roundRect(levelBoxX, levelBoxY, levelBoxW, levelBoxH, barRadius);
+  ctx.fill();
+  
+  // Texto del nivel
+  ctx.fillStyle = 'rgba(52, 152, 219, 0.9)';
+  ctx.font = 'bold 14px Arial';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('LVL ' + STATE.currentLevel, levelBoxX + levelBoxW / 2, levelBoxY + levelBoxH / 2);
+  
+  // Borde redondeado
+  ctx.strokeStyle = 'rgba(41, 128, 185, 0.6)';
+  ctx.lineWidth = 1.5;
+  roundRect(levelBoxX, levelBoxY, levelBoxW, levelBoxH, barRadius);
+  ctx.stroke();
+}
+
+
+/**
+ * =====================================
  * AUDIO ENGINE (Web Audio API)
  * =====================================
  */
@@ -385,6 +483,7 @@ function init() {
   STATE.levelUp = false;
   STATE.scrollOffset = 0;
   initializeClouds();
+  initializeFalcon();
   updateUI();
 }
 
@@ -413,6 +512,86 @@ function spawn() {
   }
 }
 
+
+/**
+ * =====================================
+ * SISTEMA DE HALCÓN
+ * =====================================
+ */
+function initializeFalcon() {
+  if (STATE.currentLevel < 2) {
+    STATE.falcon = null;
+    return;
+  }
+  
+  STATE.falcon = {
+    x: canvas.width,
+    y: Math.random() * (canvas.height - 200) + 100,
+    w: 50,
+    h: 40,
+    speed: 3 + STATE.currentLevel * 0.5,
+    verticalSpeed: 0,
+    verticalAccel: 0,
+    targetY: Math.random() * (canvas.height - 200) + 100,
+    changeDirectionCounter: 0,
+    changeDirectionInterval: Math.max(10, 60 - STATE.currentLevel * 5)
+  };
+}
+
+function updateFalcon() {
+  if (!STATE.falcon || STATE.currentLevel < 2) return;
+  
+  // Cambiar dirección vertical aleatoriamente
+  STATE.falcon.changeDirectionCounter++;
+  if (STATE.falcon.changeDirectionCounter >= STATE.falcon.changeDirectionInterval) {
+    STATE.falcon.targetY = Math.random() * (canvas.height - 200) + 100;
+    STATE.falcon.verticalAccel = (Math.random() - 0.5) * (STATE.currentLevel * 0.3);
+    STATE.falcon.changeDirectionCounter = 0;
+  }
+  
+  // Movimiento vertical hacia el objetivo
+  let dy = STATE.falcon.targetY - STATE.falcon.y;
+  STATE.falcon.verticalSpeed += STATE.falcon.verticalAccel;
+  STATE.falcon.verticalSpeed += dy * 0.01 * (STATE.currentLevel * 0.1);
+  STATE.falcon.verticalSpeed = Math.max(-4, Math.min(4, STATE.falcon.verticalSpeed));
+  
+  STATE.falcon.y += STATE.falcon.verticalSpeed;
+  
+  // Mantener en pantalla
+  STATE.falcon.y = Math.max(70, Math.min(canvas.height - 50, STATE.falcon.y));
+  
+  // Movimiento horizontal
+  STATE.falcon.x -= STATE.falcon.speed;
+}
+
+function drawFalcon() {
+  if (!STATE.falcon || STATE.currentLevel < 2) return;
+  
+  if (imgHalcon.complete && imgHalcon.naturalWidth !== 0) {
+    ctx.drawImage(imgHalcon, STATE.falcon.x, STATE.falcon.y, STATE.falcon.w, STATE.falcon.h);
+  } else {
+    // Placeholder si no está cargada la imagen
+    ctx.fillStyle = '#555';
+    ctx.beginPath();
+    ctx.ellipse(STATE.falcon.x + STATE.falcon.w/2, STATE.falcon.y + STATE.falcon.h/2, STATE.falcon.w/2, STATE.falcon.h/2, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+function checkFalconCollision() {
+  if (!STATE.falcon || STATE.currentLevel < 2) return;
+  
+  let dx = (STATE.bird.x + STATE.bird.w/2) - (STATE.falcon.x + STATE.falcon.w/2);
+  let dy = (STATE.bird.y + STATE.bird.h/2) - (STATE.falcon.y + STATE.falcon.h/2);
+  let dist = Math.sqrt(dx * dx + dy * dy);
+  
+  if (dist < (STATE.bird.w/2 + STATE.falcon.w/2)) {
+    STATE.gameOver = true;
+    playSound('gameOver');
+  }
+}
+
+
 /**
  * =====================================
  * LÓGICA DE FÍSICA Y COLISIONES
@@ -431,6 +610,9 @@ function update() {
   updateClouds();
   updateScroll();
 
+  // Actualizar halcon
+  updateFalcon();
+
   // Física afectada por el peso
   let gravedadActual = CONFIG.bird.gravity + (STATE.bird.weight * CONFIG.bird.gravityPerWeight);
   STATE.bird.vel += gravedadActual;
@@ -443,8 +625,8 @@ function update() {
     playSound('gameOver');
     return;
   }
-  if (STATE.bird.y < 0) {
-    STATE.bird.y = 0;
+  if (STATE.bird.y < 70) {
+    STATE.bird.y = 70;
     STATE.bird.vel = 0;
   }
 
@@ -469,6 +651,9 @@ function update() {
     // FIX CRÍTICO: Cambiar de splice(i, i) a splice(i, 1)
     if (o.x < -50) STATE.obstacles.splice(i, 1);
   }
+  
+  // Verificar colision con halcon
+  checkFalconCollision();
   STATE.frame++;
 }
 
@@ -480,8 +665,8 @@ function update() {
 function aplicarEfecto(tipo) {
   if (tipo === 'cereza') {
     STATE.bird.weight += 1;
-    STATE.bird.w = Math.min(STATE.bird.w + 3, CONFIG.bird.maxSize);
-    STATE.bird.h = Math.min(STATE.bird.h + 3, CONFIG.bird.maxSize);
+    STATE.bird.w = Math.min(STATE.bird.w + 5, CONFIG.bird.maxSize);
+    STATE.bird.h = Math.min(STATE.bird.h + 5, CONFIG.bird.maxSize);
     STATE.score += CONFIG.levels.pointsPerCereza;
     
     // Crear partículas
@@ -527,6 +712,7 @@ function levelUpHandler() {
   STATE.gameStarted = false;
   
   // Reset score para próximo nivel
+  initializeFalcon();
   STATE.score = 0;
 }
 
@@ -536,21 +722,12 @@ function levelUpHandler() {
  * =====================================
  */
 function updateUI() {
-  document.getElementById('nivel').innerText = STATE.currentLevel;
-  document.getElementById('score').innerText = STATE.score;
-  document.getElementById('peso').innerText = STATE.bird.weight.toFixed(1);
-  
-  let pointsNeeded = CONFIG.levels.basePoints * STATE.currentLevel;
-  document.getElementById('objetivo').innerText = pointsNeeded;
-  
-  let agilidad = Math.max(0, 100 - STATE.bird.weight * 6);
-  document.getElementById('agilidad').innerText = agilidad.toFixed(0) + "%";
-  
+  // Actualizar high score si es necesario
   if (STATE.highScore < STATE.score) {
     STATE.highScore = STATE.score;
     localStorage.setItem('highScore', STATE.highScore);
   }
-  document.getElementById('highScore').innerText = STATE.highScore;
+  // Las barras de UI se dibujan directamente en el canvas
 }
 
 /**
@@ -596,7 +773,12 @@ function draw() {
   drawParticles();
 
   // Dibujar Piso
+  
+  // Dibujar Halcon
+  drawFalcon();
   drawGround();
+  // Dibujar Barras de UI
+  drawUIBars();
 
   // PANTALLA DE CAMBIO DE NIVEL
   if (STATE.levelUp) {
@@ -618,12 +800,12 @@ function draw() {
     ctx.fillStyle = 'white';
     ctx.fillText('Próximo objetivo: ' + pointsNeeded + ' puntos', canvas.width/2, canvas.height/2 + 70);
     
-    if (STATE.levelUpTimer <= 0) {
-      STATE.levelUp = false;
-    }
-    update();
-    requestAnimationFrame(draw);
-    return;
+     if (STATE.levelUpTimer <= 0) {
+       STATE.levelUp = false;
+       STATE.gameStarted = false;
+     }
+     requestAnimationFrame(draw);
+     return;
   }
 
   // PANTALLA DE GAME OVER
@@ -642,12 +824,11 @@ function draw() {
     ctx.fillText('Score: ' + STATE.score, canvas.width/2, canvas.height/2 + 30);
     
     ctx.font = '18px Arial';
-    ctx.fillText('High Score: ' + STATE.highScore, canvas.width/2, canvas.height/2 + 80);
-    ctx.fillText('Clic para reintentar', canvas.width/2, canvas.height/2 + 130);
-    
-    update();
-    requestAnimationFrame(draw);
-    return;
+     ctx.fillText('High Score: ' + STATE.highScore, canvas.width/2, canvas.height/2 + 80);
+     ctx.fillText('Clic para reintentar', canvas.width/2, canvas.height/2 + 130);
+     
+     requestAnimationFrame(draw);
+     return;
   }
 
   // MENSAJES DE PANTALLA
@@ -728,13 +909,16 @@ window.addEventListener('touchcancel', (e) => {
   handleInputUp();
 });
 
-// Aplicar fuerza de salto mientras se mantiene el clic
+// Aplicar fuerza de salto cuando se presiona O se mantiene presionado
 function handleFlightInput() {
   if (STATE.mousePressed && STATE.gameStarted && !STATE.gameOver && !STATE.levelUp && !STATE.paused) {
     // El peso reduce la efectividad del salto
     let fuerzaSalto = CONFIG.bird.lift * (1 - (STATE.bird.weight * CONFIG.bird.liftPenalty));
-    STATE.bird.vel = fuerzaSalto;
+    STATE.bird.vel += fuerzaSalto;
   }
+  
+  // Actualizar estado para siguiente frame
+  STATE.mousePressedLastFrame = STATE.mousePressed;
 }
 
 // Tecla P para pausar
